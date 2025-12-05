@@ -65,7 +65,8 @@ ENV VITE_APP_DISABLE_TRACKING=""
 COPY --from=build /opt/node_app/excalidraw-app/build /usr/share/nginx/html
 COPY launcher.py /
 
-HEALTHCHECK CMD wget -q -O /dev/null http://localhost || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:80 || exit 1
 EXPOSE 80
 
 CMD ["/opt/node_app/.venv/bin/python3", "/launcher.py", "/usr/share/nginx/html"]
