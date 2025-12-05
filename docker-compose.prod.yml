@@ -1,0 +1,97 @@
+version: "3.8"
+
+# NoemAI Draw - Self-Contained Production Stack
+# All services internal, single entry point via Traefik
+# No CORS issues - everything under same domain
+
+services:
+  # =============================================================
+  # FRONTEND - Excalidraw App with nginx proxy
+  # =============================================================
+  excalidraw:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    depends_on:
+      - storage
+      - room
+    networks:
+      - internal
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.noemai-draw.rule=Host(`noemai-draw.robotsinlove.be`)"
+      - "traefik.http.routers.noemai-draw.entrypoints=websecure"
+      - "traefik.http.routers.noemai-draw.tls.certresolver=letsencrypt"
+      - "traefik.http.services.noemai-draw.loadbalancer.server.port=80"
+      - "traefik.docker.network=dokploy-network"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # =============================================================
+  # STORAGE BACKEND - Scenes & Files persistence
+  # =============================================================
+  storage:
+    image: alswl/excalidraw-storage-backend:v2023.11.11
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - PORT=8080
+      - STORAGE_URI=redis://redis:6379
+      - LOG_LEVEL=info
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # =============================================================
+  # ROOM SERVER - WebSocket for real-time collaboration
+  # =============================================================
+  room:
+    image: excalidraw/excalidraw-room:sha-49bf529
+    restart: unless-stopped
+    environment:
+      - PORT=3002
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3002"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # =============================================================
+  # REDIS - Data persistence for storage backend
+  # =============================================================
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  internal:
+    driver: bridge
+  dokploy-network:
+    external: true
+
+volumes:
+  redis_data:
+    driver: local
