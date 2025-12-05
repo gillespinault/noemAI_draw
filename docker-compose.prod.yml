@@ -70,6 +70,30 @@ services:
       retries: 3
 
   # =============================================================
+  # INJECTION SERVICE - API for image injection (via nginx proxy)
+  # Accessible at: /api/inject/...
+  # =============================================================
+  injection:
+    build:
+      context: ./injection-service
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - storage
+      - room
+    environment:
+      - PORT=3003
+      - STORAGE_BACKEND_URL=http://storage:8080
+      - ROOM_SERVER_URL=http://room:3002
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # =============================================================
   # REDIS - Data persistence for storage backend
   # =============================================================
   redis:

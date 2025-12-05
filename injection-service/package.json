@@ -1,0 +1,16 @@
+{
+  "name": "noemai-injection-service",
+  "version": "1.0.0",
+  "description": "Image injection service for NoemAI Draw collaboration",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "pako": "^2.1.0",
+    "socket.io-client": "^4.7.2"
+  }
+}
