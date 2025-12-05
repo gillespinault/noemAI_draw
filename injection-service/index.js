@@ -28,6 +28,17 @@ const STORAGE_BACKEND_URL = process.env.STORAGE_BACKEND_URL || 'http://storage:8
 const ROOM_SERVER_URL = process.env.ROOM_SERVER_URL || 'http://room:3002';
 const PORT = process.env.PORT || 3003;
 
+// Z-order layers (lexicographic ordering)
+// Lower = background, Higher = foreground
+const Z_LAYERS = {
+  background: 'a0',      // Background shapes/colors
+  image: 'a1',           // Images
+  shape: 'a2',           // Rectangles, ellipses, etc.
+  line: 'a3',            // Lines and arrows
+  text: 'a4',            // Text labels (always on top)
+  foreground: 'a5'       // Special foreground elements
+};
+
 // ============================================================
 // Crypto utilities (matching Excalidraw's implementation)
 // ============================================================
@@ -307,7 +318,7 @@ app.post('/inject-image', async (req, res) => {
       opacity: 100,
       groupIds: [],
       frameId: null,
-      index: `a${Date.now()}`,
+      index: `${Z_LAYERS.image}${Date.now()}`,
       roundness: null,
       seed: Math.floor(Math.random() * 1000000000),
       version: Date.now(),
@@ -343,11 +354,37 @@ app.post('/inject-image', async (req, res) => {
 });
 
 /**
+ * Get z-index based on element type
+ */
+function getZIndex(elementType, layer = null) {
+  if (layer && Z_LAYERS[layer]) {
+    return `${Z_LAYERS[layer]}${Date.now()}`;
+  }
+
+  // Auto-detect layer from element type
+  switch (elementType) {
+    case 'image':
+      return `${Z_LAYERS.image}${Date.now()}`;
+    case 'text':
+      return `${Z_LAYERS.text}${Date.now()}`;
+    case 'arrow':
+    case 'line':
+      return `${Z_LAYERS.line}${Date.now()}`;
+    case 'rectangle':
+    case 'ellipse':
+    case 'diamond':
+      return `${Z_LAYERS.shape}${Date.now()}`;
+    default:
+      return `${Z_LAYERS.shape}${Date.now()}`;
+  }
+}
+
+/**
  * Simple text/shape injection (no file upload needed)
  */
 app.post('/inject-element', async (req, res) => {
   try {
-    const { roomId, roomKey, element } = req.body;
+    const { roomId, roomKey, element, layer } = req.body;
 
     if (!roomId || !roomKey || !element) {
       return res.status(400).json({
@@ -355,7 +392,7 @@ app.post('/inject-element', async (req, res) => {
       });
     }
 
-    // Ensure element has required fields
+    // Ensure element has required fields with proper z-ordering
     const completeElement = {
       id: element.id || generateElementId(),
       version: Date.now(),
@@ -364,11 +401,51 @@ app.post('/inject-element', async (req, res) => {
       groupIds: [],
       boundElements: [],
       frameId: null,
+      index: getZIndex(element.type, layer),
       ...element
     };
 
     const result = await broadcastImageElement(roomId, roomKey, completeElement);
-    res.json({ success: true, elementId: completeElement.id });
+    res.json({ success: true, elementId: completeElement.id, index: completeElement.index });
+
+  } catch (error) {
+    console.error(`[Injection] Error:`, error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * Delete element(s) from a room
+ *
+ * POST /delete-elements
+ * Body: { roomId, roomKey, elementIds: string[] }
+ */
+app.post('/delete-elements', async (req, res) => {
+  try {
+    const { roomId, roomKey, elementIds } = req.body;
+
+    if (!roomId || !roomKey || !elementIds || !Array.isArray(elementIds)) {
+      return res.status(400).json({
+        error: 'Missing required fields: roomId, roomKey, elementIds (array)'
+      });
+    }
+
+    console.log(`[Injection] Deleting ${elementIds.length} elements from room ${roomId}`);
+
+    // Create delete updates for each element
+    const deletedElements = elementIds.map(id => ({
+      id: id,
+      isDeleted: true,
+      version: Date.now(),
+      versionNonce: Math.floor(Math.random() * 1000000000)
+    }));
+
+    // Broadcast all deletions
+    for (const element of deletedElements) {
+      await broadcastImageElement(roomId, roomKey, element);
+    }
+
+    res.json({ success: true, deleted: elementIds.length });
 
   } catch (error) {
     console.error(`[Injection] Error:`, error);
