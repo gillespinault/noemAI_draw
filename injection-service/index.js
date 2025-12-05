@@ -65,35 +65,75 @@ function encryptData(keyStr, data) {
 }
 
 /**
- * Compress and encrypt file data (matching Excalidraw's file format)
+ * Excalidraw's concatBuffers format:
+ * [VERSION:4bytes][LEN1:4bytes][DATA1][LEN2:4bytes][DATA2]...
+ */
+function concatBuffers(...buffers) {
+  const CONCAT_BUFFERS_VERSION = 1;
+
+  // Calculate total size
+  const totalSize = 4 + buffers.reduce((acc, buf) => acc + 4 + buf.length, 0);
+  const result = Buffer.alloc(totalSize);
+
+  let cursor = 0;
+
+  // Write version (4 bytes, big-endian)
+  result.writeUInt32BE(CONCAT_BUFFERS_VERSION, cursor);
+  cursor += 4;
+
+  // Write each buffer with its length prefix
+  for (const buf of buffers) {
+    result.writeUInt32BE(buf.length, cursor);
+    cursor += 4;
+    buf.copy(result, cursor);
+    cursor += buf.length;
+  }
+
+  return result;
+}
+
+/**
+ * Compress and encrypt file data (matching Excalidraw's exact format)
+ *
+ * Format: concatBuffers([
+ *   encodingMetadata,  // JSON: {version:2, compression:"pako@1", encryption:"AES-GCM"}
+ *   iv,                // 12 bytes
+ *   encrypt(deflate(concatBuffers([
+ *     contentsMetadata,  // JSON: {mimeType, created, ...}
+ *     dataBuffer         // actual file bytes
+ *   ])))
+ * ])
  */
 function compressAndEncryptFile(keyStr, dataUrl, mimeType) {
-  // File metadata
-  const metadata = {
+  // Encoding metadata (outer wrapper info)
+  const encodingMetadata = {
+    version: 2,
+    compression: "pako@1",
+    encryption: "AES-GCM"
+  };
+  const encodingMetadataBuffer = Buffer.from(JSON.stringify(encodingMetadata), 'utf-8');
+
+  // Contents metadata (file info)
+  const contentsMetadata = {
     mimeType: mimeType || 'image/png',
     created: Date.now()
   };
+  const contentsMetadataBuffer = Buffer.from(JSON.stringify(contentsMetadata), 'utf-8');
 
-  // Encode dataURL as bytes
-  const dataBytes = Buffer.from(dataUrl, 'utf-8');
+  // File data (the dataURL as bytes)
+  const dataBuffer = Buffer.from(dataUrl, 'utf-8');
 
-  // Compress with pako
-  const compressed = pako.deflate(dataBytes);
+  // Inner structure: concatBuffers(contentsMetadata, dataBuffer)
+  const innerConcat = concatBuffers(contentsMetadataBuffer, dataBuffer);
 
-  // Create metadata header (matching Excalidraw format)
-  const metadataJson = JSON.stringify(metadata);
-  const metadataBytes = Buffer.from(metadataJson, 'utf-8');
-  const metadataLength = Buffer.alloc(4);
-  metadataLength.writeUInt32BE(metadataBytes.length, 0);
+  // Compress the inner structure
+  const compressed = pako.deflate(innerConcat);
 
-  // Combine: metadata_length (4 bytes) + metadata + compressed_data
-  const payload = Buffer.concat([metadataLength, metadataBytes, compressed]);
+  // Encrypt the compressed data
+  const { encryptedBuffer, iv } = encryptData(keyStr, Buffer.from(compressed));
 
-  // Encrypt
-  const { encryptedBuffer, iv } = encryptData(keyStr, payload);
-
-  // Final format: IV + encrypted
-  return Buffer.concat([iv, encryptedBuffer]);
+  // Final structure: concatBuffers(encodingMetadata, iv, encryptedBuffer)
+  return concatBuffers(encodingMetadataBuffer, iv, encryptedBuffer);
 }
 
 /**
