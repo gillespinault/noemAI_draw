@@ -164,8 +164,11 @@ async function broadcastImageElement(roomId, roomKey, element) {
       const encoded = Buffer.from(json, 'utf-8');
       const { encryptedBuffer, iv } = encryptData(roomKey, encoded);
 
-      // Emit the update
-      socket.emit('server', roomId, encryptedBuffer, iv);
+      // Emit the update (server-broadcast is the correct event name)
+      // Convert to ArrayBuffer/Uint8Array format expected by room server
+      const encryptedArray = new Uint8Array(encryptedBuffer);
+      const ivArray = new Uint8Array(iv);
+      socket.emit('server-broadcast', roomId, encryptedArray, ivArray);
 
       console.log(`[Injection] Element broadcast complete`);
 
