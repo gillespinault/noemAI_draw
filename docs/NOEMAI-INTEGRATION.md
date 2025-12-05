@@ -68,6 +68,92 @@ if (window.excalidrawAPI) {
 
 ### Méthodes disponibles
 
+---
+
+### API Générique - Création d'éléments (Recommandé)
+
+#### `createElement(opts)` - Factory générique
+
+Crée un élément Excalidraw valide avec tous les defaults corrects. Supporte **tous les types** d'éléments.
+
+```javascript
+// Rectangle simple
+const rect = window.excalidrawAPI.createElement({
+  type: "rectangle",
+  x: 100, y: 200,
+  width: 150, height: 100,
+  strokeColor: "#e03131",
+  backgroundColor: "#ffc9c9"
+});
+
+// Texte
+const text = window.excalidrawAPI.createElement({
+  type: "text",
+  x: 100, y: 200,
+  text: "Hello World!",
+  fontSize: 24,
+  strokeColor: "#1971c2"
+});
+
+// Flèche
+const arrow = window.excalidrawAPI.createElement({
+  type: "arrow",
+  x: 100, y: 200,
+  width: 200, height: 50,
+  endArrowhead: "arrow"
+});
+```
+
+**Types supportés**: `rectangle`, `diamond`, `ellipse`, `text`, `line`, `arrow`, `freedraw`, `frame`
+
+**Options communes**:
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `type` | string | (requis) | Type d'élément |
+| `x`, `y` | number | (requis) | Position |
+| `width`, `height` | number | 100 | Dimensions |
+| `strokeColor` | string | "#1e1e1e" | Couleur du trait |
+| `backgroundColor` | string | "transparent" | Couleur de fond |
+| `fillStyle` | string | "solid" | Style de remplissage |
+| `strokeWidth` | number | 2 | Épaisseur du trait |
+| `opacity` | number | 100 | Opacité (0-100) |
+
+**Options spécifiques text**:
+| Option | Type | Default |
+|--------|------|---------|
+| `text` | string | (requis) |
+| `fontSize` | number | 20 |
+| `fontFamily` | number | 1 |
+| `textAlign` | string | "left" |
+
+#### `addElement(opts)` - Tout-en-un (Recommandé)
+
+Crée un élément, l'ajoute à la scène, et **synchronise automatiquement** avec les collaborateurs.
+
+```javascript
+// Ajouter un rectangle synchronisé
+const result = await window.excalidrawAPI.addElement({
+  type: "rectangle",
+  x: 300, y: 400,
+  width: 200, height: 150,
+  strokeColor: "#2f9e44",
+  backgroundColor: "#b2f2bb"
+});
+
+console.log(result.id);      // ID de l'élément créé
+console.log(result.element); // Élément complet
+```
+
+**Avantages de `addElement`**:
+- ✅ Structure d'élément garantie valide
+- ✅ Version haute automatique (150-250) pour le broadcast
+- ✅ Synchronisation collaboration automatique
+- ✅ Fonctionne avec TOUS les types d'éléments
+
+---
+
+### API Images
+
 #### `addImageFromDataUrl(dataUrl, x, y, mimeType, options?)`
 
 Ajoute une image à partir d'un DataURL (base64).
@@ -150,7 +236,36 @@ const atoms = window.collabAtoms;
 
 ## Problèmes résolus
 
-### 1. Éléments non synchronisés (version trop basse)
+### 1. Éléments ne s'affichent pas (propriétés manquantes)
+
+**Symptôme**: Les éléments existent dans `getSceneElements()` mais ne s'affichent pas visuellement. Erreur console: `TypeError: Cannot read properties of undefined (reading 'length')`.
+
+**Cause**: Des propriétés requises sont `undefined` au lieu d'être des tableaux vides ou `null`:
+- `groupIds` → doit être `[]`, pas `undefined`
+- `boundElements` → doit être `[]`, pas `null` ou `undefined`
+- `frameId` → doit être `null`, pas `undefined`
+
+**Solution** - Toujours utiliser `createElement()` ou `addElement()` qui garantissent la structure correcte:
+
+```javascript
+// ❌ MAUVAIS - propriétés manquantes
+const badElement = {
+  type: "text",
+  x: 100, y: 200,
+  text: "Hello",
+  // groupIds manquant → crash!
+};
+
+// ✅ BON - utiliser l'API
+const goodElement = window.excalidrawAPI.createElement({
+  type: "text",
+  x: 100, y: 200,
+  text: "Hello"
+});
+// groupIds: [], boundElements: [], frameId: null automatiquement inclus
+```
+
+### 2. Éléments non synchronisés (version trop basse)
 
 **Symptôme**: Les éléments ajoutés programmatiquement n'apparaissaient pas chez les autres collaborateurs.
 
@@ -161,13 +276,23 @@ if (getSceneVersion(elements) > lastBroadcastedOrReceivedSceneVersion)
 
 `getSceneVersion()` = somme des `version` de tous les éléments. Avec `version: 1`, l'incrément était trop faible pour déclencher le broadcast.
 
-**Solution** (`App.tsx:435-436`):
+**Solution propre** (`App.tsx:501-507`):
 ```typescript
-// High version (100-200) ensures scene version increases enough for broadcast
-version: 100 + Math.floor(Math.random() * 100),
+/**
+ * Calculate the next appropriate version for a new element.
+ * Uses max existing version + 1 to ensure broadcast passes the version check.
+ */
+const getNextElementVersion = (): number => {
+  const elements = excalidrawAPI.getSceneElements();
+  if (elements.length === 0) return 1;
+  const maxVersion = Math.max(...elements.map(e => e.version));
+  return maxVersion + 1;
+};
 ```
 
-### 2. Images non synchronisées (timing upload)
+**Pourquoi c'est correct** : Si les éléments existants ont versions [27, 29, 103], le nouvel élément aura version = 104, augmentant la scène version suffisamment pour dépasser le seuil.
+
+### 3. Images non synchronisées (timing upload)
 
 **Symptôme**: Les formes se synchronisaient mais pas les images.
 
@@ -198,7 +323,7 @@ if (collabAPI?.isCollaborating()) {
 }
 ```
 
-### 3. WebSocket vers mauvais serveur
+### 4. WebSocket vers mauvais serveur
 
 **Symptôme**: Erreurs WebSocket vers `oss-collab.excalidraw.com`.
 
@@ -212,7 +337,7 @@ VITE_APP_STORAGE_BACKEND=http
 VITE_APP_FIREBASE_CONFIG={}
 ```
 
-### 4. Build échoue (bundle > 2MB)
+### 5. Build échoue (bundle > 2MB)
 
 **Symptôme**: `Error: Assets exceeding the limit: index.js is 2.3 MB`
 
@@ -233,10 +358,13 @@ workbox: {
 ### `/excalidraw-app/App.tsx`
 
 - **Lignes 408-449**: Fonction `createImageElement` avec version élevée
-- **Lignes 488-494**: Fonction `triggerCollabSync`
-- **Lignes 499-592**: Fonction `addImageFromUrl` avec sync forcé
-- **Lignes 597-644**: Fonction `addImageFromDataUrl` avec sync forcé
-- **Lignes 649-671**: Exposition de l'API sur `window`
+- **Lignes 451-610**: **API Générique NoemAI** (nouveau)
+  - `createBaseElementStructure()` - Structure de base pour tous les éléments
+  - `createElement()` - Factory générique par type
+  - `addElement()` - Création + ajout + sync automatique
+- **Lignes 650-656**: Fonction `triggerCollabSync`
+- **Lignes 660-750**: Fonctions `addImageFromUrl` / `addImageFromDataUrl`
+- **Lignes 848-864**: Exposition de l'API sur `window` (incluant `createElement`, `addElement`)
 
 ### `/excalidraw-app/vite.config.mts`
 
@@ -392,5 +520,6 @@ Agent NoemAI                    Excalidraw                 Autres collaborateurs
 
 ---
 
-**Dernière mise à jour**: 2025-12-04
+**Dernière mise à jour**: 2025-12-05
 **Auteur**: Claude (NoemAI Integration)
+**Version API**: 2.0 (createElement/addElement génériques)

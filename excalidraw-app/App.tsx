@@ -449,6 +449,182 @@ const ExcalidrawWrapper = () => {
       });
 
       // ═══════════════════════════════════════════════════════════════════════
+      // NOEMAI ELEMENT API - Generic, elegant, collaboration-aware factory
+      // Supports ALL Excalidraw element types with automatic defaults
+      // ═══════════════════════════════════════════════════════════════════════
+
+      type ElementType = "rectangle" | "diamond" | "ellipse" | "text" | "line" | "arrow" | "freedraw" | "frame";
+
+      interface BaseElementOpts {
+        type: ElementType;
+        x: number;
+        y: number;
+        width?: number;
+        height?: number;
+        id?: string;
+        strokeColor?: string;
+        backgroundColor?: string;
+        fillStyle?: "solid" | "hachure" | "cross-hatch" | "zigzag";
+        strokeWidth?: number;
+        strokeStyle?: "solid" | "dashed" | "dotted";
+        roughness?: number;
+        opacity?: number;
+        angle?: number;
+        locked?: boolean;
+      }
+
+      interface TextElementOpts extends BaseElementOpts {
+        type: "text";
+        text: string;
+        fontSize?: number;
+        fontFamily?: number;
+        textAlign?: "left" | "center" | "right";
+        verticalAlign?: "top" | "middle" | "bottom";
+      }
+
+      interface LinearElementOpts extends BaseElementOpts {
+        type: "line" | "arrow";
+        points?: Array<[number, number]>;
+        startArrowhead?: "arrow" | "bar" | "dot" | "triangle" | null;
+        endArrowhead?: "arrow" | "bar" | "dot" | "triangle" | null;
+      }
+
+      type CreateElementOpts = BaseElementOpts | TextElementOpts | LinearElementOpts;
+
+      /**
+       * Calculate the next appropriate version for a new element.
+       * Uses max existing version + 1 to ensure broadcast passes the version check:
+       *   getSceneVersion(elements) > lastBroadcastedOrReceivedSceneVersion
+       *
+       * This is the PROPER solution instead of hardcoding high versions.
+       */
+      const getNextElementVersion = (): number => {
+        const elements = excalidrawAPI.getSceneElements();
+        if (elements.length === 0) return 1;
+        // Use max version + 1 to guarantee scene version increases
+        const maxVersion = Math.max(...elements.map(e => e.version));
+        return maxVersion + 1;
+      };
+
+      /**
+       * Creates the base structure for ANY Excalidraw element
+       * All required properties with intelligent defaults
+       */
+      const createBaseElementStructure = (type: string, opts: Partial<BaseElementOpts>) => ({
+        id: opts.id || `noemai-${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        x: opts.x ?? 0,
+        y: opts.y ?? 0,
+        width: opts.width ?? 100,
+        height: opts.height ?? 100,
+        angle: (opts.angle ?? 0) as Radians,
+        strokeColor: opts.strokeColor ?? "#1e1e1e",
+        backgroundColor: opts.backgroundColor ?? "transparent",
+        fillStyle: opts.fillStyle ?? "solid",
+        strokeWidth: opts.strokeWidth ?? 2,
+        strokeStyle: opts.strokeStyle ?? "solid",
+        roughness: opts.roughness ?? 1,
+        opacity: opts.opacity ?? 100,
+        // ⭐ CRITICAL: These properties MUST be arrays/null, never undefined
+        groupIds: [] as string[],
+        boundElements: [] as any[],
+        frameId: null,
+        index: null,
+        roundness: null,
+        link: null,
+        locked: opts.locked ?? false,
+        seed: Math.floor(Math.random() * 2 ** 31),
+        // ⭐ PROPER VERSION: max existing + 1 ensures broadcast passes version check
+        version: getNextElementVersion(),
+        versionNonce: Math.floor(Math.random() * 2 ** 31),
+        isDeleted: false,
+        updated: Date.now(),
+      });
+
+      /**
+       * createElement - Generic factory for ALL Excalidraw element types
+       * Returns a complete, valid element ready for collaboration
+       */
+      const createElement = (opts: CreateElementOpts): any => {
+        const base = createBaseElementStructure(opts.type, opts);
+
+        // Type-specific properties
+        switch (opts.type) {
+          case "text": {
+            const textOpts = opts as TextElementOpts;
+            return {
+              ...base,
+              text: textOpts.text,
+              fontSize: textOpts.fontSize ?? 20,
+              fontFamily: textOpts.fontFamily ?? 1,
+              textAlign: textOpts.textAlign ?? "left",
+              verticalAlign: textOpts.verticalAlign ?? "top",
+              containerId: null,
+              originalText: textOpts.text,
+              autoResize: true,
+              lineHeight: 1.25,
+            };
+          }
+
+          case "line":
+          case "arrow": {
+            const linearOpts = opts as LinearElementOpts;
+            return {
+              ...base,
+              points: linearOpts.points ?? [[0, 0], [base.width, base.height]],
+              startBinding: null,
+              endBinding: null,
+              startArrowhead: opts.type === "arrow" ? (linearOpts.startArrowhead ?? null) : null,
+              endArrowhead: opts.type === "arrow" ? (linearOpts.endArrowhead ?? "arrow") : null,
+              lastCommittedPoint: null,
+            };
+          }
+
+          case "freedraw":
+            return {
+              ...base,
+              points: [[0, 0]],
+              pressures: [0.5],
+              simulatePressure: true,
+              lastCommittedPoint: null,
+            };
+
+          case "frame":
+            return {
+              ...base,
+              name: null,
+            };
+
+          // Generic shapes: rectangle, diamond, ellipse
+          default:
+            return base;
+        }
+      };
+
+      /**
+       * addElement - All-in-one: creates element + adds to scene + syncs collaboration
+       * This is the recommended method for external integrations
+       */
+      const addElement = async (opts: CreateElementOpts): Promise<{ element: any; id: string }> => {
+        const element = createElement(opts);
+        const currentElements = excalidrawAPI.getSceneElements();
+
+        // Add to scene
+        excalidrawAPI.updateScene({
+          elements: [...currentElements, element],
+        });
+
+        // Sync with collaborators
+        if (collabAPI?.isCollaborating()) {
+          const updatedElements = excalidrawAPI.getSceneElements();
+          collabAPI.syncElements(updatedElements);
+          console.log(`[NoemAI] Element added and synced: ${element.type} (${element.id})`);
+        }
+
+        return { element, id: element.id };
+      };
+
+      // ═══════════════════════════════════════════════════════════════════════
       // HELPER: Calculate dimensions maintaining aspect ratio
       // ═══════════════════════════════════════════════════════════════════════
       const calculateDimensions = (
@@ -686,7 +862,13 @@ const ExcalidrawWrapper = () => {
       // ═══════════════════════════════════════════════════════════════════════
       (window as any).excalidrawAPI = {
         ...excalidrawAPI,
-        // NoemAI custom methods (collaboration-aware)
+        // ═══════════════════════════════════════════════════════════════════════
+        // NOEMAI ELEMENT API - Generic, collaboration-aware element creation
+        // ═══════════════════════════════════════════════════════════════════════
+        createElement,     // Factory: creates valid element structure
+        addElement,        // All-in-one: create + add + sync collaboration
+        // ═══════════════════════════════════════════════════════════════════════
+        // NoemAI custom methods (collaboration-aware) - Images
         addImageFromUrl,
         addImageFromDataUrl,
         // Expose collabAPI access for advanced use cases
