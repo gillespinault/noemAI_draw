@@ -26,6 +26,9 @@ services:
       - "traefik.http.routers.noemai-draw.tls.certresolver=letsencrypt"
       - "traefik.http.services.noemai-draw.loadbalancer.server.port=80"
       - "traefik.docker.network=dokploy-network"
+      # Increase body size limit for image injection
+      - "traefik.http.middlewares.noemai-body-limit.buffering.maxRequestBodyBytes=52428800"
+      - "traefik.http.routers.noemai-draw.middlewares=noemai-body-limit"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80"]
       interval: 30s

@@ -20,6 +20,8 @@ const pako = require('pako');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.raw({ limit: '50mb', type: 'application/octet-stream' }));
 
 // Configuration
 const STORAGE_BACKEND_URL = process.env.STORAGE_BACKEND_URL || 'http://storage:8080';
