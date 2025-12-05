@@ -17,6 +17,8 @@
 !vitest.config.ts
 !excalidraw-app
 !launcher.py
+!nginx.prod.conf
+!Dockerfile.prod
 
 # keep (sub)sub directories at the end to exclude from explicit included
 # e.g. ./packages/excalidraw/{dist,node_modules}
